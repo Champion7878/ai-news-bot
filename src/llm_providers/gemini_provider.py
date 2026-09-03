@@ -2,6 +2,7 @@
 Gemini Provider - Google Gemini API implementation
 """
 import os
+import re
 from typing import List, Dict, Any, Optional
 import google.generativeai as genai
 from .base_provider import BaseLLMProvider
@@ -49,10 +50,11 @@ class GeminiProvider(BaseLLMProvider):
         """Last-resort fallback if live model discovery fails (e.g. network/permission issue).
 
         Google frequently renames/retires Gemini model versions (this hardcoded value has
-        gone stale twice already), so _resolve_default_model() below asks the API directly
-        instead of relying on this guess whenever possible.
+        gone stale three times already — gemini-3-pro-preview, gemini-2.0-flash-exp, then
+        gemini-2.5-flash got cut off from new API keys), so _resolve_default_model() below
+        asks the API directly instead of relying on this guess whenever possible.
         """
-        return "gemini-2.5-flash"
+        return "gemini-3.6-flash"
 
     def _resolve_default_model(self) -> str:
         """
@@ -86,8 +88,15 @@ class GeminiProvider(BaseLLMProvider):
             name = m.name.rsplit('/', 1)[-1]
             is_unstable = any(tag in name for tag in ('exp', 'preview', 'thinking'))
             is_flash = 'flash' in name
-            # Prefer flash (fast/cheap) over pro, and stable releases over exp/preview builds.
-            return (0 if is_flash else 1, 1 if is_unstable else 0, name)
+            version_match = re.search(r'(\d+)(?:\.(\d+))?', name)
+            version = (
+                (int(version_match.group(1)), int(version_match.group(2) or 0))
+                if version_match else (0, 0)
+            )
+            # Prefer flash (fast/cheap) over pro, stable releases over exp/preview/thinking
+            # builds, and the newest version number (older ones get retired for new API keys
+            # even while list_models() still reports them, as seen with gemini-2.5-flash).
+            return (0 if is_flash else 1, 1 if is_unstable else 0, tuple(-v for v in version), name)
 
         chosen = min(available, key=stability_score)
         chosen_name = chosen.name.rsplit('/', 1)[-1]
@@ -122,31 +131,56 @@ class GeminiProvider(BaseLLMProvider):
             Exception: If API call fails
         """
         try:
-            logger.debug(f"Calling Gemini API with {len(messages)} messages")
-
-            # Convert messages to Gemini format
-            gemini_messages = self._convert_messages_to_gemini_format(messages)
-
-            # Configure generation settings
-            generation_config = genai.types.GenerationConfig(
-                max_output_tokens=max_tokens,
-                temperature=temperature,
-            )
-
-            # Generate response
-            response = self.client.generate_content(
-                gemini_messages,
-                generation_config=generation_config,
-            )
-
-            if response.text:
-                return response.text
-
-            raise Exception("No response received from Gemini")
-
+            return self._generate_once(messages, max_tokens, temperature)
         except Exception as e:
+            # Google sometimes retires a model even while list_models() still lists it
+            # (e.g. "no longer available to new users") and names its replacement right
+            # in the error text ("...use models/gemini-3.6-flash..."). Reuse that instead
+            # of hardcoding yet another version string that will eventually go stale too.
+            suggested = self._extract_suggested_model(str(e))
+            if suggested and suggested != self.model:
+                logger.warning(
+                    f"Model '{self.model}' was rejected ({e}); API suggested '{suggested}', "
+                    f"retrying once with it."
+                )
+                self.model = suggested
+                self.client = genai.GenerativeModel(self.model)
+                try:
+                    return self._generate_once(messages, max_tokens, temperature)
+                except Exception as retry_e:
+                    logger.error(f"Gemini API error after retry: {str(retry_e)}", exc_info=True)
+                    raise
+
             logger.error(f"Gemini API error: {str(e)}", exc_info=True)
             raise
+
+    def _generate_once(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        """Single attempt at a Gemini generateContent call, no retry logic."""
+        logger.debug(f"Calling Gemini API with {len(messages)} messages")
+
+        gemini_messages = self._convert_messages_to_gemini_format(messages)
+
+        generation_config = genai.types.GenerationConfig(
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        response = self.client.generate_content(
+            gemini_messages,
+            generation_config=generation_config,
+        )
+
+        if response.text:
+            return response.text
+
+        raise Exception("No response received from Gemini")
+
+    @staticmethod
+    def _extract_suggested_model(error_text: str) -> Optional[str]:
+        """Pull a replacement model name out of a Gemini error message, if it names one
+        (e.g. '...Please update your code to use models/gemini-3.6-flash...')."""
+        match = re.search(r'use\s+models/([a-zA-Z0-9._-]+)', error_text, re.IGNORECASE)
+        return match.group(1) if match else None
 
     def generate_with_tools(
         self,
