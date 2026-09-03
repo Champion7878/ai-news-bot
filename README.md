@@ -400,18 +400,18 @@ llm:
 
 **Pricing:** Extremely cost-effective with reasoning capabilities
 
-#### Google Gemini - Gemini 3 Pro
+#### Google Gemini - Gemini Flash
 
 ```yaml
 llm:
   provider: gemini
-  model: gemini-3.1-pro-preview # optional, uses default if not set
+  model: gemini-2.0-flash-exp # optional, uses default if not set
 ```
 
 **Available Models:**
 
-- `gemini-3.1-pro-preview` - Latest Gemini 3.1 Pro (default) - Next-gen multimodal AI
-- `gemini-2.0-flash-thinking-exp-01-21` - Gemini 2.0 with thinking mode
+- `gemini-2.0-flash-exp` - Gemini 2.0 Flash (default) - Fast and cost-effective
+- `gemini-3.1-pro-preview` - Gemini 3.1 Pro preview for advanced use cases
 
 **Pricing:** Free tier available, very cost-effective for production
 

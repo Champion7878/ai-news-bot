@@ -44,7 +44,7 @@ class GeminiProvider(BaseLLMProvider):
 
     @property
     def default_model(self) -> str:
-        return "gemini-3.1-pro-preview"
+        return "gemini-2.0-flash-exp"
 
     def generate(
         self,
