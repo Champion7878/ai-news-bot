@@ -28,14 +28,12 @@ class NewsFetcher:
             "Wired AI": "https://www.wired.com/feed/tag/ai/latest/rss",
             "The Next Web": "https://thenextweb.com/feed",
             "The Verge AI": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
-            "Engadget AI": "https://www.engadget.com/tag/ai/rss.xml",
 
             # Official AI Company Blogs
-            "OpenAI Blog": "https://openai.com/blog/rss/",
+            "OpenAI Blog": "https://openai.com/news/rss.xml",
             "Google AI Blog": "https://blog.google/technology/ai/rss/",
             "DeepMind Blog": "https://deepmind.google/blog/rss.xml",
-            "Meta AI Blog": "https://ai.meta.com/blog/rss/",
-            "Microsoft AI Blog": "https://blogs.microsoft.com/ai/feed/",
+            "Meta Engineering Blog": "https://engineering.fb.com/feed/",
 
             # Research & Academic
             "arXiv AI": "https://rss.arxiv.org/rss/cs.AI",
@@ -44,7 +42,6 @@ class NewsFetcher:
             "arXiv NLP": "https://rss.arxiv.org/rss/cs.CL",
 
             # Industry Verticals
-            "Healthcare IT News AI": "https://www.healthcareitnews.com/taxonomy/term/31/feed",
             "Robotics Business Review": "https://www.roboticsbusinessreview.com/feed/",
             "Autonomous Vehicle News": "https://www.autonomousvehicleinternational.com/feed",
         }
@@ -245,8 +242,10 @@ class NewsFetcher:
             logger.error(f"Failed to fetch RSS feed {feed_url}: {str(e)}")
             return []
 
-    def _clean_html(self, text: str) -> str:
+    def _clean_html(self, text: Optional[str]) -> str:
         """Remove HTML tags from text and decode HTML entities (e.g. &#x2F; -> /)"""
+        if not text:
+            return ''
         import re
         import html
         clean = re.compile('<.*?>')

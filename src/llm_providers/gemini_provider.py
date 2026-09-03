@@ -31,10 +31,12 @@ class GeminiProvider(BaseLLMProvider):
                 "Google API key must be provided or set in GOOGLE_API_KEY environment variable"
             )
 
-        super().__init__(api_key=api_key, model=model or self.default_model)
+        # Configure Gemini API before any model lookup, since resolving the
+        # default model needs a live, authenticated call.
+        genai.configure(api_key=api_key)
 
-        # Configure Gemini API
-        genai.configure(api_key=self.api_key)
+        super().__init__(api_key=api_key, model=model or self._resolve_default_model())
+
         self.client = genai.GenerativeModel(self.model)
         logger.info(f"Gemini provider initialized with model: {self.model}")
 
@@ -44,7 +46,58 @@ class GeminiProvider(BaseLLMProvider):
 
     @property
     def default_model(self) -> str:
-        return "gemini-2.0-flash-exp"
+        """Last-resort fallback if live model discovery fails (e.g. network/permission issue).
+
+        Google frequently renames/retires Gemini model versions (this hardcoded value has
+        gone stale twice already), so _resolve_default_model() below asks the API directly
+        instead of relying on this guess whenever possible.
+        """
+        return "gemini-2.5-flash"
+
+    def _resolve_default_model(self) -> str:
+        """
+        Ask the Gemini API which models are actually available for this key right now,
+        and pick a sensible default — instead of hardcoding a version string that Google
+        can rename or retire at any time.
+
+        Returns:
+            A model name confirmed to support generateContent for this API key.
+        """
+        try:
+            available = [
+                m for m in genai.list_models()
+                if 'generateContent' in getattr(m, 'supported_generation_methods', [])
+            ]
+        except Exception as e:
+            logger.warning(
+                f"Could not list Gemini models ({e}); falling back to hardcoded guess "
+                f"'{self.default_model}'. Set 'llm.model' in config.yaml to pin a specific model."
+            )
+            return self.default_model
+
+        if not available:
+            logger.warning(
+                f"No Gemini models supporting generateContent were returned for this API key; "
+                f"falling back to hardcoded guess '{self.default_model}'."
+            )
+            return self.default_model
+
+        def stability_score(m) -> tuple:
+            name = m.name.rsplit('/', 1)[-1]
+            is_unstable = any(tag in name for tag in ('exp', 'preview', 'thinking'))
+            is_flash = 'flash' in name
+            # Prefer flash (fast/cheap) over pro, and stable releases over exp/preview builds.
+            return (0 if is_flash else 1, 1 if is_unstable else 0, name)
+
+        chosen = min(available, key=stability_score)
+        chosen_name = chosen.name.rsplit('/', 1)[-1]
+        other_names = sorted(m.name.rsplit('/', 1)[-1] for m in available)
+        logger.info(
+            f"Auto-selected Gemini model: {chosen_name} "
+            f"(from {len(other_names)} available: {', '.join(other_names[:12])}"
+            f"{', ...' if len(other_names) > 12 else ''})"
+        )
+        return chosen_name
 
     def generate(
         self,
