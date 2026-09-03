@@ -3,6 +3,7 @@ Gemini Provider - Google Gemini API implementation
 """
 import os
 import re
+import time
 from typing import List, Dict, Any, Optional
 import google.generativeai as genai
 from .base_provider import BaseLLMProvider
@@ -151,6 +152,22 @@ class GeminiProvider(BaseLLMProvider):
                     logger.error(f"Gemini API error after retry: {str(retry_e)}", exc_info=True)
                     raise
 
+            # Free-tier rate limits (requests/minute/model) are transient — Google tells us
+            # exactly how long to back off, e.g. "Please retry in 44.02s." Worth one wait+retry
+            # instead of failing the whole daily digest over a 60-second window.
+            wait_seconds = self._extract_retry_delay(str(e))
+            if wait_seconds is not None:
+                wait_seconds = min(wait_seconds, 90) + 1
+                logger.warning(
+                    f"Gemini rate limit hit ({e}); waiting {wait_seconds:.0f}s before retrying once."
+                )
+                time.sleep(wait_seconds)
+                try:
+                    return self._generate_once(messages, max_tokens, temperature)
+                except Exception as retry_e:
+                    logger.error(f"Gemini API error after rate-limit retry: {str(retry_e)}", exc_info=True)
+                    raise
+
             logger.error(f"Gemini API error: {str(e)}", exc_info=True)
             raise
 
@@ -181,6 +198,13 @@ class GeminiProvider(BaseLLMProvider):
         (e.g. '...Please update your code to use models/gemini-3.6-flash...')."""
         match = re.search(r'use\s+models/([a-zA-Z0-9._-]+)', error_text, re.IGNORECASE)
         return match.group(1) if match else None
+
+    @staticmethod
+    def _extract_retry_delay(error_text: str) -> Optional[float]:
+        """Pull the suggested backoff out of a Gemini 429 error, if it names one
+        (e.g. '...Please retry in 44.02s.')."""
+        match = re.search(r'retry in ([\d.]+)s', error_text, re.IGNORECASE)
+        return float(match.group(1)) if match else None
 
     def generate_with_tools(
         self,
