@@ -37,6 +37,9 @@ class GeminiProvider(BaseLLMProvider):
         # default model needs a live, authenticated call.
         genai.configure(api_key=api_key)
 
+        self._model_candidates: List[str] = []  # ranked fallback list, filled by discovery
+        self._tried_models: set = set()
+
         super().__init__(api_key=api_key, model=model or self._resolve_default_model())
 
         self.client = genai.GenerativeModel(self.model)
@@ -88,24 +91,32 @@ class GeminiProvider(BaseLLMProvider):
         def stability_score(m) -> tuple:
             name = m.name.rsplit('/', 1)[-1]
             is_unstable = any(tag in name for tag in ('exp', 'preview', 'thinking'))
+            is_lite = 'lite' in name
             is_flash = 'flash' in name
             version_match = re.search(r'(\d+)(?:\.(\d+))?', name)
             version = (
                 (int(version_match.group(1)), int(version_match.group(2) or 0))
                 if version_match else (0, 0)
             )
-            # Prefer flash (fast/cheap) over pro, stable releases over exp/preview/thinking
-            # builds, and the newest version number (older ones get retired for new API keys
-            # even while list_models() still reports them, as seen with gemini-2.5-flash).
-            return (0 if is_flash else 1, 1 if is_unstable else 0, tuple(-v for v in version), name)
+            # Prefer "lite" variants first: for a once-a-day summarization job, their much
+            # higher free-tier daily quota (e.g. 500/day vs 20/day for plain Flash) matters
+            # far more than raw model quality. Then flash over pro, stable over exp/preview/
+            # thinking builds, and the newest version as a tie-break.
+            return (
+                0 if is_lite else 1,
+                0 if is_flash else 1,
+                1 if is_unstable else 0,
+                tuple(-v for v in version),
+                name,
+            )
 
-        chosen = min(available, key=stability_score)
-        chosen_name = chosen.name.rsplit('/', 1)[-1]
-        other_names = sorted(m.name.rsplit('/', 1)[-1] for m in available)
+        ranked = sorted(available, key=stability_score)
+        self._model_candidates = [m.name.rsplit('/', 1)[-1] for m in ranked]
+        chosen_name = self._model_candidates[0]
         logger.info(
             f"Auto-selected Gemini model: {chosen_name} "
-            f"(from {len(other_names)} available: {', '.join(other_names[:12])}"
-            f"{', ...' if len(other_names) > 12 else ''})"
+            f"(from {len(self._model_candidates)} available: {', '.join(self._model_candidates[:12])}"
+            f"{', ...' if len(self._model_candidates) > 12 else ''})"
         )
         return chosen_name
 
@@ -151,6 +162,26 @@ class GeminiProvider(BaseLLMProvider):
                 except Exception as retry_e:
                     logger.error(f"Gemini API error after retry: {str(retry_e)}", exc_info=True)
                     raise
+
+            # A per-DAY quota (GenerateRequestsPerDayPerProjectPerModel) is exhausted until
+            # tomorrow — no amount of waiting inside this run helps. Each model has its own
+            # separate daily bucket, so switch to the next candidate instead of sleeping.
+            if 'PerDay' in str(e):
+                next_model = self._next_candidate_model()
+                if next_model:
+                    logger.warning(
+                        f"Daily quota exhausted for '{self.model}' ({e}); switching to "
+                        f"'{next_model}' instead of waiting (each model has its own daily quota)."
+                    )
+                    self.model = next_model
+                    self.client = genai.GenerativeModel(self.model)
+                    try:
+                        return self._generate_once(messages, max_tokens, temperature)
+                    except Exception as retry_e:
+                        logger.error(f"Gemini API error after model switch: {str(retry_e)}", exc_info=True)
+                        raise
+                logger.error(f"Daily quota exhausted for '{self.model}' and no fallback model left: {e}")
+                raise
 
             # Free-tier rate limits (requests/minute/model) are transient — Google tells us
             # exactly how long to back off, e.g. "Please retry in 44.02s." Worth one wait+retry
@@ -205,6 +236,15 @@ class GeminiProvider(BaseLLMProvider):
         (e.g. '...Please retry in 44.02s.')."""
         match = re.search(r'retry in ([\d.]+)s', error_text, re.IGNORECASE)
         return float(match.group(1)) if match else None
+
+    def _next_candidate_model(self) -> Optional[str]:
+        """Next untried model from the ranked discovery list (see _resolve_default_model),
+        or None if we're out of candidates or discovery never ran (e.g. explicit model pin)."""
+        self._tried_models.add(self.model)
+        for name in self._model_candidates:
+            if name not in self._tried_models:
+                return name
+        return None
 
     def generate_with_tools(
         self,
