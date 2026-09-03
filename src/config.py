@@ -237,6 +237,16 @@ For each news item:
         return self.config_data.get("news", {}).get("max_items_per_source", 5)
 
     @property
+    def hackernews_max_items(self) -> int:
+        """Maximum Hacker News front-page stories to fetch"""
+        return self.config_data.get("news", {}).get("hackernews", {}).get("max_items", 15)
+
+    @property
+    def hackernews_min_points(self) -> int:
+        """Minimum score a Hacker News story needs to be considered"""
+        return self.config_data.get("news", {}).get("hackernews", {}).get("min_points", 40)
+
+    @property
     def llm_provider(self) -> str:
         """Get the LLM provider to use (claude or deepseek)"""
         # Check environment variable first, then config file

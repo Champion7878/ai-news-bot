@@ -19,7 +19,9 @@ class NewsFetcher:
         # RSS feed sources for AI news (reliable sources only)
         self.rss_feeds = {
             # Major Tech Media
+            "TechCrunch": "https://techcrunch.com/feed/",
             "TechCrunch AI": "https://techcrunch.com/tag/artificial-intelligence/feed/",
+            "TechCrunch Startups": "https://techcrunch.com/category/startups/feed/",
             "VentureBeat AI": "https://venturebeat.com/category/ai/feed/",
             "MIT Technology Review": "https://www.technologyreview.com/feed/",
             "Ars Technica AI": "https://arstechnica.com/tag/ai/feed/",
@@ -244,15 +246,82 @@ class NewsFetcher:
             return []
 
     def _clean_html(self, text: str) -> str:
-        """Remove HTML tags from text"""
+        """Remove HTML tags from text and decode HTML entities (e.g. &#x2F; -> /)"""
         import re
+        import html
         clean = re.compile('<.*?>')
-        return re.sub(clean, '', text).strip()
+        return html.unescape(re.sub(clean, '', text)).strip()
+
+    def fetch_hackernews(self, max_items: int = 15, min_points: int = 40) -> List[Dict[str, str]]:
+        """
+        Fetch top Hacker News front-page stories via the official Algolia HN Search API.
+
+        Args:
+            max_items: Maximum number of stories to return
+            min_points: Minimum score a story needs to be considered (quality bar)
+
+        Returns:
+            List of news items with title, link, description, and published date
+        """
+        try:
+            logger.info("Fetching Hacker News front page...")
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            params = {
+                'tags': 'front_page',
+                'hitsPerPage': 50,
+            }
+
+            response = requests.get(
+                "https://hn.algolia.com/api/v1/search",
+                params=params,
+                headers=headers,
+                timeout=10
+            )
+            response.raise_for_status()
+            hits = response.json().get('hits', [])
+
+            candidates = []
+            for hit in hits:
+                points = hit.get('points') or 0
+                if points < min_points:
+                    continue
+
+                hn_discussion = f"https://news.ycombinator.com/item?id={hit.get('objectID')}"
+                num_comments = hit.get('num_comments') or 0
+                story_text = self._clean_html(hit.get('story_text') or '')
+                engagement = f"[Hacker News: {points} points, {num_comments} comments] "
+
+                candidates.append({
+                    'title': hit.get('title') or '',
+                    # Ask/Show HN text posts have no external url; fall back to the discussion page
+                    'link': hit.get('url') or hn_discussion,
+                    'description': (engagement + story_text).strip(),
+                    'published': hit.get('created_at', ''),
+                    '_points': points,
+                })
+
+            # Keep the highest-engagement stories first
+            candidates.sort(key=lambda x: x['_points'], reverse=True)
+            items = candidates[:max_items]
+            for item in items:
+                del item['_points']
+
+            logger.info(f"Fetched {len(items)} Hacker News items (min {min_points} points)")
+            return items
+
+        except Exception as e:
+            logger.error(f"Failed to fetch Hacker News: {str(e)}")
+            return []
 
     def fetch_recent_news(
         self,
         language: str = "en",
-        max_items_per_source: int = 5
+        max_items_per_source: int = 5,
+        hn_max_items: int = 15,
+        hn_min_points: int = 40
     ) -> Dict[str, List[Dict[str, str]]]:
         """
         Fetch recent AI news from all configured sources.
@@ -277,6 +346,12 @@ class NewsFetcher:
             for item in items:
                 item['source'] = source_name
                 all_news['international'].append(item)
+
+        # Fetch Hacker News front page (community-curated tech/AI/startup stories)
+        hn_items = self.fetch_hackernews(max_items=hn_max_items, min_points=hn_min_points)
+        for item in hn_items:
+            item['source'] = 'Hacker News'
+            all_news['international'].append(item)
 
         # Fetch domestic news based on language
         language_feeds_map = {

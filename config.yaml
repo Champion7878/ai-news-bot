@@ -6,12 +6,11 @@ llm:
   # Gemini: Fast, multimodal, free tier available
   # Grok: Advanced reasoning, real-time data
   # OpenAI: Industry standard, latest models
-  provider: claude
+  provider: gemini
 
-  # Optional: Specify a model (if not set, uses provider's default)
-  # Claude models: claude-sonnet-4-5-20250929, claude-3-5-sonnet-20241022
-  # DeepSeek models: deepseek-chat, deepseek-reasoner
-  # model: claude-sonnet-4-5-20250929
+  # Optional: Specify a model (if not set, uses provider's default: gemini-3.1-pro-preview)
+  # If you hit free-tier rate limits with the Pro model, switch to a Flash model instead, e.g.:
+  # model: gemini-2.0-flash
 
 news:
   # Enable web search tool (uses DuckDuckGo API via LLM tool calling)
@@ -22,6 +21,11 @@ news:
   # Maximum news items to fetch per source (fetch more for AI to select from)
   max_items_per_source: 10
 
+  # Hacker News front page (community-curated AI/tech/startup stories, via Algolia HN API)
+  hackernews:
+    max_items: 15    # How many HN stories to pull in, at most
+    min_points: 40    # Quality bar: ignore stories below this score
+
   # Stage 1: Selection prompt template
   # Placeholders: {total_items}, {formatted_news}
   stage1_prompt_template: |
@@ -29,16 +33,25 @@ news:
 
       ## YOUR TASK - STAGE 1: NEWS SELECTION
 
-      You are a senior AI industry analyst. Analyze the {total_items} news items above and select exactly 15-20 of the highest-quality items.
+      You are a senior tech & AI analyst writing a daily personal newsletter for one reader who wants
+      to genuinely learn something every day. The reader cares about a broad mix: AI/LLMs, dev tools &
+      programming, startups & business, research papers, and Hacker News community picks — a bit of
+      everything, no single topic should dominate. Analyze the {total_items} news items above and
+      select exactly 20-25 of the highest-quality items.
 
       ### SELECTION CRITERIA:
       - ✅ Groundbreaking research or technical breakthroughs
       - ✅ Major product launches or significant updates
       - ✅ Important policy changes or regulations
       - ✅ Large funding rounds or M&A activities
-      - ✅ Balanced coverage across categories (LLM, Agents, Research, Products, etc.)
+      - ✅ Interesting dev tools, open-source projects, or programming techniques
+      - ✅ For Hacker News items: use the [Hacker News: N points, M comments] tag as a quality/interest
+        signal — high engagement means the community found it worth discussing
+      - ✅ Balanced coverage across categories (LLM, Agents, Dev Tools, Startups, Research, HN picks, etc.)
+        — avoid selecting 10+ items on the same narrow topic
       - ✅ Include both international and domestic news when available
       - ✅ Prefer primary sources over secondary reporting
+      - ✅ Skip duplicates: if multiple items cover the same underlying event, keep only the best one
 
       ### OUTPUT FORMAT:
       Return ONLY a JSON array of selected news IDs. No explanations, no markdown, just the JSON array.
@@ -46,12 +59,15 @@ news:
       Example format:
       ["INT-1", "INT-5", "DOM-2", "INT-12", ...]
 
-      CRITICAL: Select exactly 15-20 items. No more, no less.
+      CRITICAL: Select exactly 20-25 items. No more, no less.
 
   # Stage 2: Summarization prompt template (complete prompt for creating the digest)
   # Placeholders: {count}, {selected_news}
   stage2_prompt_template: |
-      You are a senior AI industry analyst. Create a comprehensive, in-depth news digest for the {count} pre-selected news items below.
+      You are writing a daily personal newsletter for one reader — a technical person who is equally
+      comfortable with engineering detail and business/strategic context. They read this every morning
+      to genuinely learn something new, not just skim headlines. Create a comprehensive, in-depth news
+      digest for the {count} pre-selected news items below.
 
       {selected_news}
 
@@ -60,16 +76,16 @@ news:
       Organize news items into relevant categories (use only categories that have news):
       1. **Large Language Models & Foundation Models** - LLM updates, new model releases, benchmarks
       2. **AI Agents & Autonomous Systems** - Agent frameworks, autonomous AI developments
-      3. **Multimodal AI** - Vision, audio, video AI capabilities
-      4. **Research & Academic Breakthroughs** - Papers, scientific discoveries, new methods
-      5. **Product Launches & Updates** - New products, feature releases, API updates
-      6. **AI Infrastructure & Hardware** - Chips, GPUs, training infrastructure, cloud services
-      7. **Healthcare & Biomedical AI** - Medical AI, drug discovery, diagnostics
-      8. **Robotics & Autonomous Vehicles** - Robots, self-driving, embodied AI
-      9. **Enterprise & Industry Applications** - B2B solutions, industry-specific AI
-      10. **Funding & Market Dynamics** - Investments, acquisitions, valuations
-      11. **Policy & Regulation** - Government policies, AI governance, ethics
-      12. **Open Source & Community** - Open source projects, community developments
+      3. **Developer Tools & Programming** - New frameworks, languages, DevOps, AI coding tools
+      4. **Multimodal AI** - Vision, audio, video AI capabilities
+      5. **Research & Academic Breakthroughs** - Papers, scientific discoveries, new methods
+      6. **Product Launches & Updates** - New products, feature releases, API updates
+      7. **AI Infrastructure & Hardware** - Chips, GPUs, training infrastructure, cloud services
+      8. **Funding & Market Dynamics** - Investments, acquisitions, valuations, startup news
+      9. **Policy & Regulation** - Government policies, AI governance, ethics
+      10. **Open Source & Community** - Open source projects, community developments
+      11. **Hacker News Community Picks** - Show HN projects, debates, and discussions that resonated
+          with the community (cite the points/comments when it strengthens the point)
 
       ## CONTENT REQUIREMENTS:
 
@@ -83,10 +99,11 @@ news:
       3. **Source Attribution**: Always include as clickable markdown link: [Source Name](URL)
 
       ## WRITING STYLE:
-      - Professional, analytical tone suitable for industry professionals
+      - Professional, analytical tone suitable for a reader who is both a builder and business-minded
+      - Weight technical depth (architecture, benchmarks, implementation) and business/strategic angle
+        (market impact, competitive dynamics, why it matters) roughly equally — don't lean only one way
       - Include specific numbers, metrics, and data points when available
-      - Keep technical terminology accurate (preserve technical jargon)
-      - Balance accessibility with technical depth
+      - Keep technical terminology accurate (preserve technical jargon, don't dumb it down)
       - Provide context and analysis, not just reporting facts
 
       ## EXAMPLE FORMAT:

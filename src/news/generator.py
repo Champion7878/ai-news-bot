@@ -103,6 +103,8 @@ class NewsGenerator:
         max_tokens: int = 8000,
         language: str = "en",
         max_items_per_source: int = 5,
+        hn_max_items: int = 15,
+        hn_min_points: int = 40,
         stage1_template: Optional[str] = None,
         stage2_template: Optional[str] = None
     ) -> str:
@@ -129,7 +131,9 @@ class NewsGenerator:
             logger.info("Fetching real-time AI news from sources...")
             news_data = self.news_fetcher.fetch_recent_news(
                 language=language,
-                max_items_per_source=max_items_per_source
+                max_items_per_source=max_items_per_source,
+                hn_max_items=hn_max_items,
+                hn_min_points=hn_min_points
             )
 
             if not news_data['international'] and not news_data['domestic']:

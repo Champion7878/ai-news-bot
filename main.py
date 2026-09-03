@@ -72,6 +72,8 @@ def main():
                 news_digest = news_gen.generate_news_digest_from_sources(
                     language=language,
                     max_items_per_source=config.max_items_per_source,
+                    hn_max_items=config.hackernews_max_items,
+                    hn_min_points=config.hackernews_min_points,
                     stage1_template=config.stage1_prompt_template,
                     stage2_template=config.stage2_prompt_template
                 )

@@ -2,8 +2,12 @@ name: Daily AI News Digest
 
 on:
   schedule:
-    # Tourne chaque jour à minuit UTC (ajustable)
-    - cron: '0 0 * * *'
+    # Cible : tous les jours à 6h00, heure de Paris.
+    # GitHub Actions ne connait que l'UTC (pas de DST), donc deux crons couvrent
+    # les deux décalages saisonniers de l'Europe (± ~1 semaine d'imprécision
+    # autour des changements d'heure fin mars / fin octobre) :
+    - cron: '0 5 * 11,12,1,2,3 *'   # nov-mar -> CET  (UTC+1) : 05:00 UTC = 06:00 Paris
+    - cron: '0 4 * 4,5,6,7,8,9,10 *' # avr-oct -> CEST (UTC+2) : 04:00 UTC = 06:00 Paris
   workflow_dispatch: # Permet le lancement manuel avec le bouton 'Run workflow'
 
 jobs:
